@@ -1,19 +1,12 @@
-import datetime
 import io
 import logging
 import numbers
-import os
-import os.path as osp
-import shutil
-import stat
-import tempfile
 from urllib.parse import urlparse
 
-import urllib3
-from urllib3 import Timeout, Retry
 from urllib3.exceptions import HTTPError
 
 from fsspec import AbstractFileSystem
+from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
 from fsspec.implementations.http import ex, ex2
@@ -27,40 +20,12 @@ from fsspec.utils import (
 )
 import yarl
 
-logger = logging.getLogger("fsspec.local")
+from .file import SyncHTTPFile, SyncHTTPStreamFile
+from .util import get_conn_pool, raise_for_status
 
-def get_conn_pool(connect_timeout=5, read_timeout=45, retries=3):
-    """
-    Creates a urllib3 PoolManager instance configured for downloading large files.
+logger = logging.getLogger("fsspec.http-sync")
 
-    :param connect_timeout: Timeout for establishing a connection.
-    :param read_timeout: Timeout for reading data from an open connection.
-    :param retries: Number of retries on failed requests.
-    :return: Configured instance of urllib3.PoolManager.
-    """
-    timeout_settings = Timeout(connect=connect_timeout, read=read_timeout)
-    retry_strategy = Retry(total=retries, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-
-    http_pool = urllib3.PoolManager(
-        maxsize=1,
-        timeout=timeout_settings,
-        retries=retry_strategy
-    )
-
-    return http_pool
-
-def raise_for_status(response):
-    """
-    Raises an HTTPError if the response contains an HTTP error status code.
-
-    :param response: The HTTP response object from urllib3.
-    :raises: HTTPError for error status codes (4XX, 5XX).
-    """
-    if 400 <= response.status < 600:
-        raise HTTPError(f"Request failed with status code {response.status}", response=response)
-
-
-class SynchronousHttpFileSystem(AbstractFileSystem):
+class SyncHttpFileSystem(AbstractFileSystem):
     """Synchronous fs-like interface to http resources"""
 
     def __init__(
@@ -82,7 +47,7 @@ class SynchronousHttpFileSystem(AbstractFileSystem):
         ----------
         block_size: int
             Blocks to read bytes; if 0, will default to raw requests file-like
-            objects instead of HTTPFile instances
+            objects instead of SyncHTTPFile instances
         simple_links: bool
             If True, will consider both HTML <a> tags and anything that looks
             like a URL; if False, will consider only the former.
@@ -97,7 +62,7 @@ class SynchronousHttpFileSystem(AbstractFileSystem):
         get_client: Callable[..., aiohttp.ClientSession]
             A callable which takes keyword arguments and constructs
             an aiohttp.ClientSession. It's state will be managed by
-            the HTTPFileSystem class.
+            the SyncHTTPFileSystem class.
         storage_options: key-value
             Any other parameters passed on to requests
         cache_type, cache_options: defaults used in open
@@ -124,14 +89,6 @@ class SynchronousHttpFileSystem(AbstractFileSystem):
         """For HTTP, we always want to keep the full URL"""
         return path
     
-    def _raise_not_found_for_status(self, response, url):
-        """
-        Raises FileNotFoundError for 404s, otherwise uses raise_for_status.
-        """
-        if response.status == 404:
-            raise FileNotFoundError(url)
-        raise_for_status(response)
-
     def ls(self, path, detail=True, **kwargs):
         if self.use_listings_cache and path in self.dircache:
             out = self.dircache[path]
@@ -147,9 +104,8 @@ class SynchronousHttpFileSystem(AbstractFileSystem):
         logger.debug(path)
         pool = self.get_conn_pool()
 
-        with pool as http:
-            response = http.request("GET", path)
-        self._raise_not_found_for_status(response, path)
+        response = pool.request("GET", path, preload_content=False, **kwargs)
+        raise_for_status(response, path)
 
         try:
             text = response.data.decode('utf-8')
@@ -229,9 +185,29 @@ class SynchronousHttpFileSystem(AbstractFileSystem):
 
         return {"name": path, "size": None, **info, "type": "file"}
 
+    def cat_file_generator(self, url, start=None, end=None, chunk_size=DEFAULT_BLOCK_SIZE, **kwargs):
+        kw = self.kwargs.copy()
+        kw.update(kwargs)
+        logger.debug(url)
+
+        if start is not None or end is not None:
+            if start == end:
+                return b""
+            headers = kw.pop("headers", {}).copy()
+
+            headers["Range"] = self.process_limits(url, start, end)
+            kw["headers"] = headers
+
+        pool = self.get_conn_pool()
+        response = pool.request("GET", self.encode_url(url), preload_data=False, **kw)
+        raise_for_status(response, url)
+
+        for chunk in response.stream(chunk_size):
+            yield chunk
 
     def cat_file(self, url, start=None, end=None, **kwargs):
         kw = self.kwargs.copy()
+        kw.update(kwargs)
         logger.debug(url)
 
         if start is not None or end is not None:
@@ -242,11 +218,153 @@ class SynchronousHttpFileSystem(AbstractFileSystem):
             headers["Range"] = self.process_limits(url, start, end)
             kw["headers"] = headers
         pool = self.get_conn_pool()
-        with pool as http:
-            response = http.request("GET", self.encode_url(url), **kw)
-        self._raise_not_found_for_status(response, url)
+        response = pool.request("GET", self.encode_url(url), **kw)
+        raise_for_status(response, url)
         out = response.data
         return out
+    
+    def get_file(
+        self, rpath, lpath, chunk_size=DEFAULT_BLOCK_SIZE, callback=DEFAULT_CALLBACK, **kwargs
+    ):
+        kw = self.kwargs.copy()
+        kw.update(kwargs)
+        logger.debug(rpath)
+
+        pool = self.get_conn_pool()
+        response = pool.request("GET", self.encode_url(rpath), preload_content=False, **kw)
+        raise_for_status(response, rpath)
+        headers = response.getheaders()
+
+        try:
+            size = int(headers["content-length"])
+        except (ValueError, KeyError):
+            size = None
+
+        callback.set_size(size)
+        if isfilelike(lpath):
+            outfile = lpath
+        else:
+            outfile = open(lpath, "wb")
+
+        try:
+            for chunk in response.stream(chunk_size):
+                outfile.write(chunk)
+                callback.relative_update(len(chunk))
+        finally:
+            if not isfilelike(lpath):
+                outfile.close()
+
+    def put_file(
+        self,
+        lpath,
+        rpath,
+        chunk_size=DEFAULT_BLOCK_SIZE,
+        callback=DEFAULT_CALLBACK,
+        method="POST",
+        **kwargs,
+    ):
+        def gen_chunks():
+            # Support passing arbitrary file-like objects
+            # and use them instead of streams.
+            if isinstance(lpath, io.IOBase):
+                context = nullcontext(lpath)
+                use_seek = False  # might not support seeking
+            else:
+                context = open(lpath, "rb")
+                use_seek = True
+
+            with context as f:
+                if use_seek:
+                    callback.set_size(f.seek(0, 2))
+                    f.seek(0)
+                else:
+                    callback.set_size(getattr(f, "size", None))
+
+                chunk = f.read(chunk_size)
+                while chunk:
+                    yield chunk
+                    callback.relative_update(len(chunk))
+                    chunk = f.read(chunk_size)
+
+        kw = self.kwargs.copy()
+        kw.update(kwargs)
+        pool = self.get_conn_pool()
+
+        method = method.to_upper()
+        if method not in ("POST", "PUT"):
+            raise ValueError(
+                f"method has to be either 'POST' or 'PUT', not: {method!r}"
+            )
+
+        response = pool.request(method, self.encode_url(rpath), body=gen_chunks(), **kw)
+        raise_for_status(response, rpath)
+        return response
+    
+    def exists(self, path, **kwargs):
+        kw = self.kwargs.copy()
+        kw.update(kwargs)
+        try:
+            logger.debug(path)
+            pool = self.get_conn_pool()
+            response = pool.request("GET", self.encode_url(path), **kw)
+            return response.status < 400
+        except:
+            return False
+
+    def isfile(self, path, **kwargs):
+        return self.exists(path, **kwargs)
+    
+    def open(
+        self,
+        path,
+        mode="rb",
+        block_size=None,
+        autocommit=None,  # XXX: This differs from the base class.
+        cache_type=None,
+        cache_options=None,
+        size=None,
+        **kwargs,
+    ):
+        """Make a file-like object
+
+        Parameters
+        ----------
+        path: str
+            Full URL with protocol
+        mode: string
+            must be "rb"
+        block_size: int or None
+            Bytes to download in one request; use instance value if None. If
+            zero, will return a streaming Requests file-like instance.
+        kwargs: key-value
+            Any other parameters, passed to requests calls
+        """
+        if mode != "rb":
+            raise NotImplementedError
+        block_size = block_size if block_size is not None else self.block_size
+        kw = self.kwargs.copy()
+        kw.update(kwargs)
+        size = size or self.info(path, **kwargs)["size"]
+        if block_size and size:
+            return SyncHTTPFile(
+                self,
+                path,
+                get_conn_pool=self.get_conn_pool,
+                block_size=block_size or self.block_size,
+                mode=mode,
+                size=size,
+                cache_type=cache_type or self.cache_type,
+                cache_options=cache_options or self.cache_options,
+                **kw,
+            )
+        else:
+            return SyncHTTPStreamFile(
+                self,
+                path,
+                get_conn_pool=self.get_conn_pool,
+                mode=mode,
+                **kw,
+            )
 
     def process_limits(self, url, start, end):
         """Helper for "Range"-based SYNC cat_file"""
@@ -293,13 +411,12 @@ def file_info(url, pool, size_policy="head", **kwargs):
     kwargs["headers"] = head
 
     info = {}
-    with pool as http:
-        if size_policy == "head":
-            response = http.request("HEAD", url, allow_redirects=ar, **kwargs)
-        elif size_policy == "get":
-            response = http.request("GET", url, allow_redirects=ar, **kwargs)
-        else:
-            raise TypeError(f'size_policy must be "head" or "get", got {size_policy}')
+    if size_policy == "head":
+        response = pool.request("HEAD", url, allow_redirects=ar, preload_content=False, **kwargs)
+    elif size_policy == "get":
+        response = pool.request("GET", url, allow_redirects=ar, preload_content=False, **kwargs)
+    else:
+        raise TypeError(f'size_policy must be "head" or "get", got {size_policy}')
     raise_for_status(response)
 
     headers = response.getheaders()
