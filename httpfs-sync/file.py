@@ -74,19 +74,6 @@ class SyncHTTPFile(AbstractBufferedFile):
             cache_options=cache_options,
             **kwargs,
         )
-        self.pool = get_conn_pool()
-
-    # Don't serialize the pool        
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        del state['pool']
-        del state['response']
-        return state
-    
-    # On deserialization, initialize pool
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        self.pool = self.get_conn_pool()
 
     def read(self, length=-1):
         """Read bytes from file
@@ -119,10 +106,11 @@ class SyncHTTPFile(AbstractBufferedFile):
         """
         logger.debug(f"Fetch all for {self}")
         if not isinstance(self.cache, AllBytes):
-            pool = self.get_conn_pool()
-            response = pool.request("GET", self.fs.encode_url(self.url), **self.kwargs)
-            raise_for_status(response, self.url)
-            out = response.read()
+            with self.get_conn_pool() as http:
+                response = http.request("GET", self.fs.encode_url(self.url), **self.kwargs)
+                raise_for_status(response, self.url)
+                out = response.read()
+
             self.cache = AllBytes(
                 size=len(out), fetcher=None, blocksize=None, data=out
             )
@@ -156,39 +144,41 @@ class SyncHTTPFile(AbstractBufferedFile):
         headers["Range"] = f"bytes={start}-{end - 1}"
         logger.debug(f"{self.url} : {headers['Range']}")
 
-        response = self.pool.request("GET", self.url, headers=headers, preload_data=False, **kwargs)
-        resp_headers = response.getheaders()
+        with self.get_conn_pool() as http:
+            response = http.request("GET", self.url, headers=headers, preload_data=False, **kwargs)
+            resp_headers = response.getheaders()
 
-        # If the server has handled the range request, it should reply
-        # with status 206 (partial content). But we'll guess that a suitable
-        # Content-Range header or a Content-Length no more than the
-        # requested range also mean we have got the desired range.
-        response_is_range = (
-            response.status == 206
-            or self._parse_content_range(resp_headers)[0] == start
-            or int(resp_headers.get("Content-Length", end + 1)) <= end - start
-        )
-
-        if response_is_range:
-            # partial content, as expected
-            out = response.read()
-        elif start > 0:
-            raise ValueError(
-                "The HTTP server doesn't appear to support range requests. "
-                "Only reading this file from the beginning is supported. "
-                "Open with block_size=0 for a streaming file interface."
+            # If the server has handled the range request, it should reply
+            # with status 206 (partial content). But we'll guess that a suitable
+            # Content-Range header or a Content-Length no more than the
+            # requested range also mean we have got the desired range.
+            response_is_range = (
+                response.status == 206
+                or self._parse_content_range(resp_headers)[0] == start
+                or int(resp_headers.get("Content-Length", end + 1)) <= end - start
             )
-        else:
-            # Response is not a range, but we want the start of the file,
-            # so we can read the required amount anyway.
-            cl = 0
-            out = []
-            for chunk in response.stream(2**20):
-                out.append(chunk)
-                cl += len(chunk)
-                if cl > end - start:
-                    break
-            out = b"".join(out)[: end - start]
+
+            if response_is_range:
+                # partial content, as expected
+                out = response.read()
+            elif start > 0:
+                raise ValueError(
+                    "The HTTP server doesn't appear to support range requests. "
+                    "Only reading this file from the beginning is supported. "
+                    "Open with block_size=0 for a streaming file interface."
+                )
+            else:
+                # Response is not a range, but we want the start of the file,
+                # so we can read the required amount anyway.
+                cl = 0
+                out = []
+                for chunk in response.stream(2**20):
+                    out.append(chunk)
+                    cl += len(chunk)
+                    if cl > end - start:
+                        break
+                out = b"".join(out)[: end - start]
+
         return out
 
 
@@ -201,24 +191,6 @@ class SyncHTTPStreamFile(AbstractBufferedFile):
         self.details = {"name": url, "size": None}
         self.kwargs = kwargs
         super().__init__(fs=fs, path=url, mode=mode, cache_type="none", **kwargs)
-        pool = get_conn_pool()
-
-        async def cor():
-            r = await self.session.get(self.fs.encode_url(url), **kwargs).__aenter__()
-            self.fs._raise_not_found_for_status(r, url)
-            return r
-
-    # Don't serialize the pool        
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        del state['pool']
-        del state['response']
-        return state
-    
-    # On deserialization, initialize pool
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        self.pool = self.get_conn_pool()
 
     def seek(self, loc, whence=0):
         if loc == 0 and whence == 1:
@@ -228,16 +200,16 @@ class SyncHTTPStreamFile(AbstractBufferedFile):
         raise ValueError("Cannot seek streaming HTTP file")
 
     def read(self, num=-1):
-        if not self.request:
-            self.response = self.pool.request("GET", self.url, preload_data=False, **self.kwargs)
-        if num < 0:
-            out = self.response.read()
-        else:
-            out = self.response.read(num)
-        self.loc += len(out)
+        with self.get_conn_pool() as http:
+            response = http.request("GET", self.url, preload_data=False, **self.kwargs)
+            if num < 0:
+                out = response.read()
+            else:
+                out = response.read(num)
+            self.loc += len(out)
+
         return out
 
     def close(self):
-        self.pool.close()
-        self.response.close()
         super().close()
+
