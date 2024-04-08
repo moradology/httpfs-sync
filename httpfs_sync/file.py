@@ -115,7 +115,7 @@ class SyncHTTPFile(AbstractBufferedFile):
         total = None if m[2] == "*" else int(m[2])
         return start, end, total
 
-    def fetch_range(self, start, end):
+    def _fetch_range(self, start, end):
         """Download a block of data
 
         The expectation is that the server returns only the requested bytes,
@@ -130,7 +130,7 @@ class SyncHTTPFile(AbstractBufferedFile):
         logger.debug(f"{self.url} : {headers['Range']}")
 
         with self.get_conn_pool() as http:
-            response = http.request("GET", self.url, headers=headers, preload_data=False, **kwargs)
+            response = http.request("GET", self.url, headers=headers, preload_content=False, **kwargs)
             resp_headers = response.getheaders()
 
             # If the server has handled the range request, it should reply
@@ -186,7 +186,7 @@ class SyncHTTPStreamFile(AbstractBufferedFile):
 
     def read(self, num=-1):
         with self.get_conn_pool() as http:
-            response = http.request("GET", self.url, preload_data=False, **self.kwargs)
+            response = http.request("GET", self.url, preload_content=False, **self.kwargs)
             if num < 0:
                 out = response.read()
             else:

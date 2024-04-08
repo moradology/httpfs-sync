@@ -211,7 +211,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
             kw["headers"] = headers
 
         pool = self.get_conn_pool()
-        response = pool.request("GET", self.encode_url(url), preload_data=False, **kw)
+        response = pool.request("GET", self.encode_url(url), preload_content=False, **kw)
         raise_for_status(response, url)
 
         for chunk in response.stream(chunk_size):
@@ -423,12 +423,12 @@ def file_info(url, pool, size_policy="head", **kwargs):
 
     info = {}
     if size_policy == "head":
-        response = pool.request("HEAD", url, allow_redirects=ar, preload_content=False, **kwargs)
+        response = pool.request("HEAD", url, redirect=ar, preload_content=False, **kwargs)
     elif size_policy == "get":
-        response = pool.request("GET", url, allow_redirects=ar, preload_content=False, **kwargs)
+        response = pool.request("GET", url, redirect=ar, preload_content=False, **kwargs)
     else:
         raise TypeError(f'size_policy must be "head" or "get", got {size_policy}')
-    raise_for_status(response)
+    raise_for_status(response, url)
 
     headers = response.getheaders()
 
