@@ -51,6 +51,7 @@ class SyncHTTPFile(AbstractBufferedFile):
             raise NotImplementedError("File mode not supported")
         self.url = url
         self.get_conn_pool = get_conn_pool
+        self.conn_pool = self.get_conn_pool()
         self.details = {"name": url, "size": size, "type": "file"}
         super().__init__(
             fs=fs,
@@ -61,6 +62,15 @@ class SyncHTTPFile(AbstractBufferedFile):
             cache_options=cache_options,
             **kwargs,
         )
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['conn_pool']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.conn_pool = self.get_conn_pool()
 
     def read(self, length=-1):
         """Read bytes from file
@@ -93,7 +103,7 @@ class SyncHTTPFile(AbstractBufferedFile):
         """
         logger.debug(f"Fetch all for {self}")
         if not isinstance(self.cache, AllBytes):
-            with self.get_conn_pool() as http:
+            with self.conn_pool as http:
                 response = http.request("GET", self.fs.encode_url(self.url), **self.kwargs)
                 raise_for_status(response, self.url)
                 out = response.read()
@@ -129,7 +139,7 @@ class SyncHTTPFile(AbstractBufferedFile):
         headers["Range"] = f"bytes={start}-{end - 1}"
         logger.debug(f"{self.url} : {headers['Range']}")
 
-        with self.get_conn_pool() as http:
+        with self.conn_pool as http:
             response = http.request("GET", self.url, headers=headers, preload_content=False, **kwargs)
             resp_headers = response.getheaders()
 
@@ -170,12 +180,22 @@ class SyncHTTPFile(AbstractBufferedFile):
 class SyncHTTPStreamFile(AbstractBufferedFile):
     def __init__(self, fs, url, get_conn_pool, mode="rb", session=None, **kwargs):
         self.url = url
-        self.get_conn_pool = get_conn_pool()
+        self.get_conn_pool = get_conn_pool
+        self.conn_pool = self.get_conn_pool()
         if mode != "rb":
             raise ValueError
         self.details = {"name": url, "size": None}
         self.kwargs = kwargs
         super().__init__(fs=fs, path=url, mode=mode, cache_type="none", **kwargs)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['conn_pool']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.conn_pool = self.get_conn_pool()
 
     def seek(self, loc, whence=0):
         if loc == 0 and whence == 1:
@@ -185,7 +205,7 @@ class SyncHTTPStreamFile(AbstractBufferedFile):
         raise ValueError("Cannot seek streaming HTTP file")
 
     def read(self, num=-1):
-        with self.get_conn_pool() as http:
+        with self.conn_pool as http:
             response = http.request("GET", self.url, preload_content=False, **self.kwargs)
             if num < 0:
                 out = response.read()
