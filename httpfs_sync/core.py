@@ -11,6 +11,7 @@ from fsspec import AbstractFileSystem
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
+from fsspec.registry import register_implementation
 from fsspec.utils import isfilelike, stringify_path
 from fsspec.utils import (
     DEFAULT_BLOCK_SIZE,
@@ -408,10 +409,13 @@ class SyncHTTPFileSystem(AbstractFileSystem):
                 end -= 1  # bytes range is inclusive
         return f"bytes={start}-{end}"
 
+    @classmethod
+    def overwrite_async_registration(cls):
+        register_implementation("http", cls)
+        register_implementation("https", cls)
 
-# ========== HELPERS ===============
-# ========== HELPERS ===============
-# ========== HELPERS ===============
+
+
 # ========== HELPERS ===============
 def file_info(url, pool, size_policy="head", **kwargs):
     """Call HEAD on the server to get details about the file (size/checksum etc.)
