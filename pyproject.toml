@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name="httpfs-sync"
+description="Install requirements and run code in virtual environments from the comfort of your own GIL"
+classifiers=[
+        "Intended Audience :: Developers",
+        "Intended Audience :: Information Technology",
+        "Intended Audience :: Science/Research",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "License :: OSI Approved :: MIT License",
+    ]
+keywords=["virtualenv", "dependencies"]
+authors=[{ name = "Nathan Zimmerman", email = "npzimmerman@gmail.com"}]
+license= { text = "MIT" }
+requires-python=">=3.8"
+dependencies = ["fsspec"]
+dynamic = ["version", "readme"]
+
+[project.urls]
+homepage = "https://github.com/moradology/httpfs-sync"
+repository = "https://github.com/moradology/httpfs-sync.git"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0",
+       "pytest-cov>=4.1.0",
+       "fsspec[http]"]
+lint = ["black>=23.9.1",
+        "isort>=5.13.0",
+        "flake8>=7.0.0",
+        "Flake8-pyproject>=1.2.3",
+        "mypy>=1.8.0",
+        "pre-commit>=3.4.0",
+        "pytest>=8.0.0",
+        "pytest-cov>=4.1.0",
+        "tox>=4.11.3"]
+
+[tool.setuptools.dynamic]
+version = { attr = "httpfs_sync.version.__version__" }
+readme = {file = ["README.md"], content-type = "text/markdown"}
+
+[tool.setuptools.package-data]
+"httpfs_sync" = ["*.typed"]
+
+[tool.setuptools.packages.find]
+include = ["httpfs_sync*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+addopts = "-sv --cov httpfs_sync --cov-report xml --cov-report term-missing  --cov-fail-under 80"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+known_first_party = "httpfs_sync"
+known_third_party = []
+default_section = "THIRDPARTY"
+
+[tool.mypy]
+ignore_missing_imports = true
+exclude = ["tests", ".venv"]
+
+[tool.flake8]
+ignore = ["E501", "W503"]
+select = ["C","E","F","W","B","B950"]
+exclude = ["tests", ".venv", ".tox", ".git", ".mypy_cache"]
+max-line-length = 100

@@ -11,7 +11,6 @@ from fsspec.spec import AbstractBufferedFile
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
-from fsspec.implementations.http import ex, ex2
 from fsspec.utils import isfilelike, stringify_path
 from fsspec.utils import (
     DEFAULT_BLOCK_SIZE,

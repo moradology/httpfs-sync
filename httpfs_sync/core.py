@@ -1,6 +1,8 @@
+from copy import copy
 import io
 import logging
 import numbers
+import re
 from urllib.parse import urlparse
 
 from urllib3.exceptions import HTTPError
@@ -9,7 +11,6 @@ from fsspec import AbstractFileSystem
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
-from fsspec.implementations.http import ex, ex2
 from fsspec.utils import isfilelike, stringify_path
 from fsspec.utils import (
     DEFAULT_BLOCK_SIZE,
@@ -23,9 +24,12 @@ import yarl
 from .file import SyncHTTPFile, SyncHTTPStreamFile
 from .util import get_conn_pool, raise_for_status
 
+# Reimplementing these instead of importing from fsspec's http.py to avoid aiohttp dependency
+ex = re.compile(r"""<(a|A)\s+(?:[^>]*?\s+)?(href|HREF)=["'](?P<url>[^"']+)""")
+ex2 = re.compile(r"""(?P<url>http[s]?://[-a-zA-Z0-9@:%_+.~#?&/=]+)""")
 logger = logging.getLogger("fsspec.http-sync")
 
-class SyncHttpFileSystem(AbstractFileSystem):
+class SyncHTTPFileSystem(AbstractFileSystem):
     """Synchronous fs-like interface to http resources"""
 
     def __init__(
@@ -77,12 +81,24 @@ class SyncHttpFileSystem(AbstractFileSystem):
         self.encoded = encoded
         self.kwargs = storage_options
 
+        # Clean caching-related parameters from `storage_options`
+        # before propagating them as `request_options` through `self.kwargs`.
+        # TODO: Maybe rename `self.kwargs` to `self.request_options` to make
+        #       it clearer.
+        request_options = copy(storage_options)
+        self.use_listings_cache = request_options.pop("use_listings_cache", False)
+        request_options.pop("listings_expiry_time", None)
+        request_options.pop("max_paths", None)
+        request_options.pop("skip_instance_cache", None)
+        self.kwargs = request_options
+
     @property
     def fsid(self):
         return "http-sync"
 
     def encode_url(self, url):
-        return yarl.URL(url, encoded=self.encoded)
+        # Maintained to ensure consistency with upstream
+        return str(yarl.URL(url, encoded=self.encoded))
 
     @classmethod
     def _strip_protocol(cls, path):

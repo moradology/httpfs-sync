@@ -32,4 +32,4 @@ def raise_for_status(response, url):
         raise FileNotFoundError(url)
 
     if 400 <= response.status < 600:
-        raise HTTPError(f"Request failed with status code {response.status}", response=response)
+        raise HTTPError(f"Request failed with status code {response.status}")
