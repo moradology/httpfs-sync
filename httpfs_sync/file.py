@@ -1,28 +1,16 @@
 import logging
 import re
-from urllib.parse import urlparse
-
-import urllib3
-from urllib3 import Timeout, Retry
-from urllib3.exceptions import HTTPError
 
 from fsspec.caching import AllBytes
 from fsspec.spec import AbstractBufferedFile
-from fsspec.callbacks import DEFAULT_CALLBACK
-from fsspec.compression import compr
-from fsspec.core import get_compression
-from fsspec.utils import isfilelike, stringify_path
-from fsspec.utils import (
-    DEFAULT_BLOCK_SIZE,
-    glob_translate,
-    isfilelike,
-    nullcontext,
-    tokenize,
-)
 
 from .util import raise_for_status
 
+# TODO: determine compr/compression behaviors that are missing
+
+
 logger = logging.getLogger("fsspec.http-sync")
+
 
 class SyncHTTPFile(AbstractBufferedFile):
     """
@@ -110,9 +98,7 @@ class SyncHTTPFile(AbstractBufferedFile):
                 raise_for_status(response, self.url)
                 out = response.read()
 
-            self.cache = AllBytes(
-                size=len(out), fetcher=None, blocksize=None, data=out
-            )
+            self.cache = AllBytes(size=len(out), fetcher=None, blocksize=None, data=out)
             self.size = len(out)
 
     def _parse_content_range(self, headers):
@@ -211,4 +197,3 @@ class SyncHTTPStreamFile(AbstractBufferedFile):
 
     def close(self):
         super().close()
-

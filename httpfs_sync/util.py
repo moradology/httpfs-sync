@@ -15,11 +15,7 @@ def get_conn_pool(connect_timeout=5, read_timeout=45, retries=3):
     timeout_settings = Timeout(connect=connect_timeout, read=read_timeout)
     retry_strategy = Retry(total=retries, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
 
-    http_pool = urllib3.PoolManager(
-        maxsize=1,
-        timeout=timeout_settings,
-        retries=retry_strategy
-    )
+    http_pool = urllib3.PoolManager(maxsize=1, timeout=timeout_settings, retries=retry_strategy)
 
     return http_pool
 

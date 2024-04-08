@@ -1,34 +1,27 @@
-from copy import copy
 import io
 import logging
 import numbers
 import re
+from copy import copy
 from urllib.parse import urlparse
 
-from urllib3.exceptions import HTTPError
-
+import yarl
 from fsspec import AbstractFileSystem
 from fsspec.callbacks import DEFAULT_CALLBACK
-from fsspec.compression import compr
-from fsspec.core import get_compression
 from fsspec.registry import register_implementation
-from fsspec.utils import isfilelike, stringify_path
-from fsspec.utils import (
-    DEFAULT_BLOCK_SIZE,
-    glob_translate,
-    isfilelike,
-    nullcontext,
-    tokenize,
-)
-import yarl
+from fsspec.utils import DEFAULT_BLOCK_SIZE, isfilelike, nullcontext
 
 from .file import SyncHTTPFile, SyncHTTPStreamFile
 from .util import get_conn_pool, raise_for_status
+
+# TODO: determine any compr/compression behaviors missing
+
 
 # Reimplementing these instead of importing from fsspec's http.py to avoid aiohttp dependency
 ex = re.compile(r"""<(a|A)\s+(?:[^>]*?\s+)?(href|HREF)=["'](?P<url>[^"']+)""")
 ex2 = re.compile(r"""(?P<url>http[s]?://[-a-zA-Z0-9@:%_+.~#?&/=]+)""")
 logger = logging.getLogger("fsspec.http-sync")
+
 
 class SyncHTTPFileSystem(AbstractFileSystem):
     """Synchronous fs-like interface to http resources"""
@@ -105,7 +98,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
     def _strip_protocol(cls, path):
         """For HTTP, we always want to keep the full URL"""
         return path
-    
+
     def ls(self, path, detail=True, **kwargs):
         if self.use_listings_cache and path in self.dircache:
             out = self.dircache[path]
@@ -125,7 +118,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         raise_for_status(response, path)
 
         try:
-            text = response.data.decode('utf-8')
+            text = response.data.decode("utf-8")
             if self.simple_links:
                 links = ex2.findall(text) + [u[2] for u in ex.findall(text)]
             else:
@@ -133,27 +126,27 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         except UnicodeDecodeError:
             # Handle binary response or decoding error
             links = []
-        
+
         out = set()
         parts = urlparse(path)
-        for l in links:
-            if isinstance(l, tuple):
-                l = l[1]
-            if l.startswith("/") and len(l) > 1:
+        for link in links:
+            if isinstance(link, tuple):
+                link = link[1]
+            if link.startswith("/") and len(link) > 1:
                 # absolute URL on this server
-                l = f"{parts.scheme}://{parts.netloc}{l}"
-            if l.startswith("http"):
-                if self.same_schema and l.startswith(path.rstrip("/") + "/"):
-                    out.add(l)
-                elif l.replace("https", "http").startswith(
+                link = f"{parts.scheme}://{parts.netloc}{link}"
+            if link.startswith("http"):
+                if self.same_schema and link.startswith(path.rstrip("/") + "/"):
+                    out.add(link)
+                elif link.replace("https", "http").startswith(
                     path.replace("https", "http").rstrip("/") + "/"
                 ):
                     # allowed to cross http <-> https
-                    out.add(l)
+                    out.add(link)
             else:
-                if l not in ["..", "../"]:
+                if link not in ["..", "../"]:
                     # Ignore FTP-like "parent"
-                    out.add("/".join([path.rstrip("/"), l.lstrip("/")]))
+                    out.add("/".join([path.rstrip("/"), link.lstrip("/")]))
         if not out and path.endswith("/"):
             out = self._ls_real(path.rstrip("/"), detail=False)
         if detail:
@@ -202,7 +195,9 @@ class SyncHTTPFileSystem(AbstractFileSystem):
 
         return {"name": path, "size": None, **info, "type": "file"}
 
-    def cat_file_generator(self, url, start=None, end=None, chunk_size=DEFAULT_BLOCK_SIZE, **kwargs):
+    def cat_file_generator(
+        self, url, start=None, end=None, chunk_size=DEFAULT_BLOCK_SIZE, **kwargs
+    ):
         kw = self.kwargs.copy()
         kw.update(kwargs)
         logger.debug(url)
@@ -239,7 +234,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         raise_for_status(response, url)
         out = response.data
         return out
-    
+
     def get_file(
         self, rpath, lpath, chunk_size=DEFAULT_BLOCK_SIZE, callback=DEFAULT_CALLBACK, **kwargs
     ):
@@ -309,14 +304,12 @@ class SyncHTTPFileSystem(AbstractFileSystem):
 
         method = method.to_upper()
         if method not in ("POST", "PUT"):
-            raise ValueError(
-                f"method has to be either 'POST' or 'PUT', not: {method!r}"
-            )
+            raise ValueError(f"method has to be either 'POST' or 'PUT', not: {method!r}")
 
         response = pool.request(method, self.encode_url(rpath), body=gen_chunks(), **kw)
         raise_for_status(response, rpath)
         return response
-    
+
     def exists(self, path, **kwargs):
         kw = self.kwargs.copy()
         kw.update(kwargs)
@@ -325,12 +318,12 @@ class SyncHTTPFileSystem(AbstractFileSystem):
             pool = self.get_conn_pool()
             response = pool.request("GET", self.encode_url(path), **kw)
             return response.status < 400
-        except:
+        except Exception:
             return False
 
     def isfile(self, path, **kwargs):
         return self.exists(path, **kwargs)
-    
+
     def open(
         self,
         path,
@@ -415,8 +408,6 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         register_implementation("https", cls)
 
 
-
-# ========== HELPERS ===============
 def file_info(url, pool, size_policy="head", **kwargs):
     """Call HEAD on the server to get details about the file (size/checksum etc.)
 
@@ -442,8 +433,8 @@ def file_info(url, pool, size_policy="head", **kwargs):
     headers = response.getheaders()
 
     # Check for 'Accept-Ranges' header
-    accept_ranges = headers.get('Accept-Ranges', '')
-    if accept_ranges.lower() == 'none' or 'Accept-Ranges' not in headers:
+    accept_ranges = headers.get("Accept-Ranges", "")
+    if accept_ranges.lower() == "none" or "Accept-Ranges" not in headers:
         # No random access supported, return None
         info["random_access"] = False
     else:
@@ -477,4 +468,3 @@ def file_size(url, pool=None, *args, **kwargs):
         pool = get_conn_pool()
     info = file_info(url, pool, *args, **kwargs)
     return info.get("size")
-
