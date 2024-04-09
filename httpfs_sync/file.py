@@ -3,13 +3,12 @@ import re
 
 from fsspec.caching import AllBytes
 from fsspec.spec import AbstractBufferedFile
+from fsspec.utils import DEFAULT_BLOCK_SIZE
 
 from .util import raise_for_status
 
-# TODO: determine compr/compression behaviors that are missing
 
-
-logger = logging.getLogger("fsspec.http-sync")
+logger = logging.getLogger("httpfs-sync")
 
 
 class SyncHTTPFile(AbstractBufferedFile):
@@ -137,8 +136,6 @@ class SyncHTTPFile(AbstractBufferedFile):
         kwargs = self.kwargs.copy()
         headers = kwargs.pop("headers", {}).copy()
         headers["Range"] = f"bytes={start}-{end - 1}"
-        logger.debug(f"{self.url} : {headers['Range']}")
-
         with self.conn_pool as http:
             response = http.request("GET", self.url, headers=headers, preload_content=False, **kwargs)
             resp_headers = response.getheaders()
@@ -167,7 +164,7 @@ class SyncHTTPFile(AbstractBufferedFile):
                 # so we can read the required amount anyway.
                 cl = 0
                 out = []
-                for chunk in response.stream(2**20):
+                for chunk in response.stream(1024**5):
                     out.append(chunk)
                     cl += len(chunk)
                     if cl > end - start:
@@ -175,10 +172,10 @@ class SyncHTTPFile(AbstractBufferedFile):
                 out = b"".join(out)[: end - start]
 
         return out
-
+    
 
 class SyncHTTPStreamFile(AbstractBufferedFile):
-    def __init__(self, fs, url, get_conn_pool, mode="rb", session=None, **kwargs):
+    def __init__(self, fs, url, get_conn_pool, mode="rb", **kwargs):
         self.url = url
         self.get_conn_pool = get_conn_pool
         self.conn_pool = self.get_conn_pool()

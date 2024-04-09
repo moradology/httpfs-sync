@@ -20,7 +20,7 @@ from .util import get_conn_pool, raise_for_status
 # Reimplementing these instead of importing from fsspec's http.py to avoid aiohttp dependency
 ex = re.compile(r"""<(a|A)\s+(?:[^>]*?\s+)?(href|HREF)=["'](?P<url>[^"']+)""")
 ex2 = re.compile(r"""(?P<url>http[s]?://[-a-zA-Z0-9@:%_+.~#?&/=]+)""")
-logger = logging.getLogger("fsspec.http-sync")
+logger = logging.getLogger("httpfs-sync")
 
 
 class SyncHTTPFileSystem(AbstractFileSystem):
@@ -111,7 +111,6 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         # ignoring URL-encoded arguments
         kw = self.kwargs.copy()
         kw.update(kwargs)
-        logger.debug(path)
         pool = self.get_conn_pool()
 
         response = pool.request("GET", path, preload_content=False, **kwargs)
@@ -200,7 +199,6 @@ class SyncHTTPFileSystem(AbstractFileSystem):
     ):
         kw = self.kwargs.copy()
         kw.update(kwargs)
-        logger.debug(url)
 
         if start is not None or end is not None:
             if start == end:
@@ -220,7 +218,6 @@ class SyncHTTPFileSystem(AbstractFileSystem):
     def cat_file(self, url, start=None, end=None, **kwargs):
         kw = self.kwargs.copy()
         kw.update(kwargs)
-        logger.debug(url)
 
         if start is not None or end is not None:
             if start == end:
@@ -240,7 +237,6 @@ class SyncHTTPFileSystem(AbstractFileSystem):
     ):
         kw = self.kwargs.copy()
         kw.update(kwargs)
-        logger.debug(rpath)
 
         pool = self.get_conn_pool()
         response = pool.request("GET", self.encode_url(rpath), preload_content=False, **kw)
@@ -314,7 +310,6 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         kw = self.kwargs.copy()
         kw.update(kwargs)
         try:
-            logger.debug(path)
             pool = self.get_conn_pool()
             response = pool.request("GET", self.encode_url(path), **kw)
             return response.status < 400
@@ -330,7 +325,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         mode="rb",
         block_size=None,
         autocommit=None,  # XXX: This differs from the base class.
-        cache_type=None,
+        cache_type="bytes",
         cache_options=None,
         size=None,
         **kwargs,
