@@ -19,7 +19,7 @@ keywords=["virtualenv", "dependencies"]
 authors=[{ name = "Nathan Zimmerman", email = "npzimmerman@gmail.com"}]
 license= { text = "MIT" }
 requires-python=">=3.8"
-dependencies = ["fsspec"]
+dependencies = [fsspec]
 dynamic = ["version", "readme"]
 
 [project.urls]
@@ -28,8 +28,7 @@ repository = "https://github.com/moradology/httpfs-sync.git"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0",
-       "pytest-cov>=4.1.0",
-       "fsspec[http]"]
+       "pytest-cov>=4.1.0"]
 lint = ["black>=23.9.1",
         "isort>=5.13.0",
         "flake8>=7.0.0",
