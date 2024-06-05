@@ -399,8 +399,8 @@ class SyncHTTPFileSystem(AbstractFileSystem):
 
     @classmethod
     def overwrite_async_registration(cls):
-        register_implementation("http", cls)
-        register_implementation("https", cls)
+        register_implementation("http", cls, clobber=True)
+        register_implementation("https", cls, clobber=True)
 
 
 def file_info(url, pool, size_policy="head", **kwargs):
