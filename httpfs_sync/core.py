@@ -12,7 +12,7 @@ from fsspec.registry import register_implementation
 from fsspec.utils import DEFAULT_BLOCK_SIZE, isfilelike, nullcontext
 
 from .file import SyncHTTPFile, SyncHTTPStreamFile
-from .util import get_conn_pool, raise_for_status
+from .util import get_pool_manager, raise_for_status
 
 # TODO: determine any compr/compression behaviors missing
 
@@ -34,7 +34,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         size_policy=None,
         cache_type="bytes",
         cache_options=None,
-        get_conn_pool=get_conn_pool,
+        get_pool_manager=get_pool_manager,
         encoded=False,
         **storage_options,
     ):
@@ -71,7 +71,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         self.same_schema = same_scheme
         self.cache_type = cache_type
         self.cache_options = cache_options
-        self.get_conn_pool = get_conn_pool
+        self.get_pool_manager = get_pool_manager
         self.encoded = encoded
         self.kwargs = storage_options
 
@@ -111,7 +111,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         # ignoring URL-encoded arguments
         kw = self.kwargs.copy()
         kw.update(kwargs)
-        pool = self.get_conn_pool()
+        pool = self.get_pool_manager()
 
         response = pool.request("GET", path, preload_content=False, **kwargs)
         raise_for_status(response, path)
@@ -171,14 +171,14 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         corresponding file will not work).
         """
         info = {}
-        pool = self.get_conn_pool()
+        manager = self.get_pool_manager()
 
         for policy in ["head", "get"]:
             try:
                 info.update(
                     file_info(
                         self.encode_url(path),
-                        pool=pool,
+                        pool_manager=manager,
                         size_policy=policy,
                         **self.kwargs,
                         **kwargs,
@@ -208,7 +208,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
             headers["Range"] = self.process_limits(url, start, end)
             kw["headers"] = headers
 
-        pool = self.get_conn_pool()
+        pool = self.get_pool_manager()
         response = pool.request("GET", self.encode_url(url), preload_content=False, **kw)
         raise_for_status(response, url)
 
@@ -226,7 +226,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
 
             headers["Range"] = self.process_limits(url, start, end)
             kw["headers"] = headers
-        pool = self.get_conn_pool()
+        pool = self.get_pool_manager()
         response = pool.request("GET", self.encode_url(url), **kw)
         raise_for_status(response, url)
         out = response.data
@@ -238,7 +238,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         kw = self.kwargs.copy()
         kw.update(kwargs)
 
-        pool = self.get_conn_pool()
+        pool = self.get_pool_manager()
         response = pool.request("GET", self.encode_url(rpath), preload_content=False, **kw)
         raise_for_status(response, rpath)
         headers = response.getheaders()
@@ -296,7 +296,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
 
         kw = self.kwargs.copy()
         kw.update(kwargs)
-        pool = self.get_conn_pool()
+        pool = self.get_pool_manager()
 
         method = method.to_upper()
         if method not in ("POST", "PUT"):
@@ -310,7 +310,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
         kw = self.kwargs.copy()
         kw.update(kwargs)
         try:
-            pool = self.get_conn_pool()
+            pool = self.get_pool_manager()
             response = pool.request("GET", self.encode_url(path), **kw)
             return response.status < 400
         except Exception:
@@ -354,7 +354,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
             return SyncHTTPFile(
                 self,
                 path,
-                get_conn_pool=self.get_conn_pool,
+                get_pool_manager=self.get_pool_manager,
                 block_size=block_size or self.block_size,
                 mode=mode,
                 size=size,
@@ -366,7 +366,7 @@ class SyncHTTPFileSystem(AbstractFileSystem):
             return SyncHTTPStreamFile(
                 self,
                 path,
-                get_conn_pool=self.get_conn_pool,
+                get_pool_manager=self.get_pool_manager,
                 mode=mode,
                 **kw,
             )
@@ -458,8 +458,8 @@ def file_info(url, pool, size_policy="head", **kwargs):
     return info
 
 
-def file_size(url, pool=None, *args, **kwargs):
+def file_size(url, pool_manager=None, *args, **kwargs):
     if pool is None:
-        pool = get_conn_pool()
-    info = file_info(url, pool, *args, **kwargs)
+        pool = get_pool_manager()
+    info = file_info(url, pool_manager, *args, **kwargs)
     return info.get("size")

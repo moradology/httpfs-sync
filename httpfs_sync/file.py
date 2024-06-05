@@ -24,7 +24,7 @@ class SyncHTTPFile(AbstractBufferedFile):
     ----------
     url: str
         Full URL of the remote resource, including the protocol
-    get_conn_pool: a function that returns a urllib3 poolmanager
+    get_pool_manager: a function that returns a urllib3 poolmanager
     block_size: int or None
         The amount of read-ahead to do, in bytes. Default is 5MB, or the value
         configured for the FileSystem creating this file
@@ -38,7 +38,7 @@ class SyncHTTPFile(AbstractBufferedFile):
         self,
         fs,
         url,
-        get_conn_pool=None,
+        get_pool_manager=None,
         block_size=None,
         mode="rb",
         cache_type="bytes",
@@ -49,8 +49,8 @@ class SyncHTTPFile(AbstractBufferedFile):
         if mode != "rb":
             raise NotImplementedError("File mode not supported")
         self.url = url
-        self.get_conn_pool = get_conn_pool
-        self.conn_pool = self.get_conn_pool()
+        self.get_pool_manager = get_pool_manager
+        self.onn_pool = self.get_pool_manager()
         self.details = {"name": url, "size": size, "type": "file"}
         super().__init__(
             fs=fs,
@@ -69,7 +69,7 @@ class SyncHTTPFile(AbstractBufferedFile):
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self.conn_pool = self.get_conn_pool()
+        self.conn_pool = self.get_pool_manager()
 
     def read(self, length=-1):
         """Read bytes from file
@@ -172,13 +172,13 @@ class SyncHTTPFile(AbstractBufferedFile):
                 out = b"".join(out)[: end - start]
 
         return out
-    
+
 
 class SyncHTTPStreamFile(AbstractBufferedFile):
-    def __init__(self, fs, url, get_conn_pool, mode="rb", **kwargs):
+    def __init__(self, fs, url, get_pool_manager, mode="rb", **kwargs):
         self.url = url
-        self.get_conn_pool = get_conn_pool
-        self.conn_pool = self.get_conn_pool()
+        self.get_pool_manager = get_pool_manager
+        self.conn_pool = self.get_pool_manager()
         if mode != "rb":
             raise ValueError
         self.details = {"name": url, "size": None}
@@ -192,7 +192,7 @@ class SyncHTTPStreamFile(AbstractBufferedFile):
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self.conn_pool = self.get_conn_pool()
+        self.conn_pool = self.get_pool_manager()
 
     def seek(self, loc, whence=0):
         if loc == 0 and whence == 1:
